@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import pickle
+import sys
 import time
 from itertools import cycle
 
@@ -88,8 +89,6 @@ class Simulator:
             backend_is_noninteractive = (
                 backend_name in noninteractive_backends or "backend_inline" in backend
             )
-            if enable and backend_is_noninteractive:
-                print(f"[Simulator] visualization disabled: non-interactive matplotlib backend '{backend}'")
         runtime_available = bool(enable and (plt is not None) and (Poly3DCollection is not None) and (not backend_is_noninteractive))
         self.enable_realtime_animation = bool(runtime_available and self.enable_realtime_animation)
         self.enable_offline_animation = bool(runtime_available and self.enable_offline_animation)
@@ -344,6 +343,8 @@ class Simulator:
     def _print_progress(self, sim_t: float) -> None:
         if self.t_final is None or self._progress_finished:
             return
+        if not getattr(sys.stdout, "isatty", lambda: False)():
+            return
         if self._progress_start_wall_t is None:
             self._progress_start_wall_t = time.perf_counter()
 
@@ -357,14 +358,21 @@ class Simulator:
         filled = min(bar_width, int(progress * bar_width))
         bar = "=" * filled + " " * (bar_width - filled)
         wall_elapsed = time.perf_counter() - self._progress_start_wall_t
-        print(
-            f"\r[Simulator] [{bar}] {pct:3d}% | sim {sim_t:.2f}/{self.t_final:.2f}s | wall {wall_elapsed:.2f}s",
-            end="",
-            flush=True,
-        )
+        try:
+            print(
+                f"\r[Simulator] [{bar}] {pct:3d}% | sim {sim_t:.2f}/{self.t_final:.2f}s | wall {wall_elapsed:.2f}s",
+                end="",
+                flush=True,
+            )
+        except OSError:
+            self._progress_finished = True
+            return
         self._last_progress_pct = pct
         if pct >= 100:
-            print(flush=True)
+            try:
+                print(flush=True)
+            except OSError:
+                pass
             self._progress_finished = True
 
     def _cache_frame(self, mode: str, frame: dict[str, object]) -> None:

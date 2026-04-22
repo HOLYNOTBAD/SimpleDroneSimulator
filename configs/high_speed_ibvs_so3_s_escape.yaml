@@ -1,6 +1,5 @@
-# configs/ibvs_so3_ctrl.yaml
+# TCST high-speed IBVS-SO3: target S-curve escape test.
 
-# --- timing / rates ---
 rates:
   physics_hz: 1000.0
   control_hz: 200.0
@@ -20,8 +19,8 @@ visualization:
   fov_target_marker_size_min: 6.0
   fov_target_marker_size_max: 42.0
   fov_target_diameter_m: 1.5
-  map_center: [35.0, 10.0, -5.0]
-  map_size: [120.0, 90.0, 60.0]
+  map_center: [45.0, 0.0, -5.0]
+  map_size: [140.0, 100.0, 60.0]
   colors:
     uav_traj: [158, 22, 157, 140]
     uav_body_left: [22, 5, 139]
@@ -37,31 +36,30 @@ visualization:
   save_cache: false
 
 termination:
-  t_final: 20.0
+  t_final: 25.0
   hit_radius: 2.0
 
-# --- UAV initial state (NED / FRD) ---
 uav0:
   t: 0.0
-  p_e: [0.0, 0.0, 0.0]        # N, E, D (m)
-  v_e: [0.0, 0.0, 0.0]        # m/s
-  q_eb: [1.0, 0.0, 0.0, 0.0]  # identity: body aligned with world
-  w_b: [0.0, 0.0, 0.0]        # rad/s
+  p_e: [0.0, 0.0, 0.0]
+  v_e: [0.0, 0.0, 0.0]
+  q_eb: [1.0, 0.0, 0.0, 0.0]
+  w_b: [0.0, 0.0, 0.0]
 
-# --- Target initial state (NED) ---
 tgt0:
   t: 0.0
   p_e: [70.0, 0.0, 0.0]
-  v_e: [-6.0, 6.0, 0.0]
+  v_e: [3.5, 0.0, 0.0]
 
 target:
-  accel_e: null               # e.g. [0.0, 0.0, 0.0] for constant accel
+  mode: s_escape
+  accel_e: null
+  s_amplitude_m: 8.0
+  s_frequency_hz: 0.14
 
-# --- Rigid body dynamics (loaded from yaml) ---
 rigid_body:
   params_yaml: "configs/hummingbird.yaml"
 
-# --- Camera intrinsics ---
 camera:
   fx: 320.0
   fy: 320.0
@@ -71,33 +69,22 @@ camera:
   height: 480
   mount_pitch_deg: 0.0
 
-# --- Controller (ICRA26 PS-LOS, without EKF) ---
 controller:
   mass: 0.5
   g: 9.81
-
-  # Outer-loop gains in the paper notation.
-  c1: 0.8
-  c2: 1.4
-  c_omega: 1.0
-  k_p: 0.25
-  accel_max: 8.0
-
-  # Planar-sector LOS bounds.
-  alpha_lon_deg: 55.0
-  alpha_lat_deg: 8.0
-  safety_margin_deg: 2.0
-
-  # Inner SO(3) tracker and actuator limits.
+  k1: 0.8
+  k2: 1.4
+  k_los: 1.5
+  kb: 0.16
   k_att: 2.8
+  accel_max: 8.0
   omega_max: 6.0
   thrust_min: 0.0
   thrust_max: 40.0
-
   camera_mount_pitch_deg: 0.0
 
 logging:
   enable: false
   run_dir: "runs"
-  filename: null   # null -> auto timestamp
+  filename: null
   seed: 0

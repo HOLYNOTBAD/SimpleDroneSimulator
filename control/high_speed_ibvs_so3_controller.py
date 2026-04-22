@@ -1,4 +1,4 @@
-# control/ibvs_so3_controller.py
+# control/high_speed_ibvs_so3_controller.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -36,98 +36,73 @@ def _rodrigues(axis_unit: np.ndarray, angle: float) -> np.ndarray:
 
 
 @dataclass(slots=True)
-class IBVSSO3ControllerParams:
+class HighSpeedIBVSSO3ControllerParams:
     """
-    Planar-Sector LOS interception controller adapted from the ICRA26 paper.
+    TCST 2025 high-speed IBVS-SO3 interception controller.
 
-    This implementation deliberately omits the paper's DC-EKF. In simulation,
-    Observation.p_r and Observation.v_r are supplied by PerfectObserver and act
-    as the target-state estimate that the controller would otherwise receive
-    from the estimator.
-
-    Frames:
-      - World frame is NED.
-      - Body frame is FRD.
-      - Camera frame has x right, y down, z forward.
-
-    Output:
-      - total thrust magnitude [N]
-      - desired body angular rate [rad/s]
+    This implements the controller side of "High-Speed Interception
+    Multicopter Control by Image-Based Visual Servoing" without the DKF
+    observer. In this simulator, PerfectObserver supplies p_r and v_r.
     """
 
     mass: float = 0.5
     g: float = 9.81
 
-    # Paper outer-loop gains c1, c2, c_omega and position gain.
-    c1: float = 0.8
-    c2: float = 1.4
-    c_omega: float = 1.0
-    k_p: float = 0.25
-    accel_max: float = 8.0
+    # Paper gains k1, k2 and LOS barrier kb.
+    k1: float = 0.8
+    k2: float = 1.4
+    k_los: float = 1.5
+    kb: float = 0.16
 
-    # PS-LOS sector. Horizontal is barrier-limited; vertical is driven to zero.
-    alpha_lon_deg: float = 55.0
-    alpha_lat_deg: float = 8.0
-    safety_margin_deg: float = 2.0
-
-    # Inner attitude tracker and actuator limits.
+    # SO(3) attitude tracking gain added for this rate-command interface.
     k_att: float = 2.8
+
+    # The paper assumes thrust saturation. accel_max is an adapter for this
+    # simple quadrotor model so long-range scenarios do not request unrealistic
+    # translational acceleration.
+    accel_max: float = 8.0
     omega_max: float = 6.0
     thrust_min: float = 0.0
     thrust_max: float = 40.0
 
-    # Camera mounting must match scripts/ibvs_so3_ctrl_sim.py camera config.
     camera_mount_pitch_deg: float = 0.0
 
-    # Reacquisition / numerical safety.
     reacq_k_yaw: float = 2.0
     reacq_k_pitch: float = 1.6
     reacq_forward_bias: float = 0.5
     eps: float = 1e-6
 
-    @property
-    def c_h(self) -> float:
-        angle = max(1.0, self.alpha_lon_deg - self.safety_margin_deg)
-        return float(np.sin(np.deg2rad(angle)))
 
-    @property
-    def c_v(self) -> float:
-        angle = max(1.0, self.alpha_lat_deg)
-        return float(np.sin(np.deg2rad(angle)))
-
-
-class IBVSSO3Controller(ControllerBase):
+class HighSpeedIBVSSO3Controller(ControllerBase):
     """
-    PS-LOS controller:
-      - Eq. (13): z_h = n_hd^T n_t, z_v = n_vd^T n_t
-      - Eq. (15): outer acceleration/thrust vector with barrier terms
-      - Eq. (16): LOS angular-rate command
-      - Eq. (17)-(21): SO(3) attitude tracking via body-rate command
-    The paper's coordinated-turn moment compensation and final moment PID
-    (Eq. 23)-(26) are intentionally omitted because this simulator's
-    advanced-controller contract is rate + thrust.
+    Controller mapping:
+      - Eq. (13): omega_1 from designed LOS n_td to target LOS n_t
+      - Eq. (19): desired acceleration using z2 = v_r + k1 p_r
+      - Eq. (21)-(23): desired force direction and thrust
+      - Eq. (26),(28): SO(3) attitude-rate command omega_1 + omega_2
+
+    Drag and target acceleration are treated as disturbances, matching the
+    no-estimator deployment requested for this simulator.
     """
 
-    def __init__(self, p: IBVSSO3ControllerParams):
+    def __init__(self, p: HighSpeedIBVSSO3ControllerParams):
         self.p = p
         self._Rd = np.eye(3, dtype=float)
         self._force_des_e = np.array([0.0, 0.0, -self.p.mass * self.p.g], dtype=float)
-        self._omega_los_b = np.zeros(3, dtype=float)
+        self._omega1_b = np.zeros(3, dtype=float)
 
     def reset(self) -> None:
         self._Rd = np.eye(3, dtype=float)
         self._force_des_e = np.array([0.0, 0.0, -self.p.mass * self.p.g], dtype=float)
-        self._omega_los_b = np.zeros(3, dtype=float)
+        self._omega1_b = np.zeros(3, dtype=float)
 
     def _camera_axes_in_body(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # Matches sensors.camera.PinholeCamera: v_c = R_c_b0 * R_mount.T * v_b.
         pitch = np.deg2rad(float(self.p.camera_mount_pitch_deg))
         c = float(np.cos(-pitch))
         s = float(np.sin(-pitch))
         r_mount = np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]], dtype=float)
         r_c_b0 = np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=float)
-        r_c_b = r_c_b0 @ r_mount.T
-        r_b_c = r_c_b.T
+        r_b_c = (r_c_b0 @ r_mount.T).T
         return r_b_c[:, 0], r_b_c[:, 1], r_b_c[:, 2]
 
     def _hover_thrust(self, R_e_b: np.ndarray) -> float:
@@ -142,52 +117,44 @@ class IBVSSO3Controller(ControllerBase):
 
         dir_b = R_e_b.T @ _normalize(-pr_e, self.p.eps)
         if dir_b[0] <= self.p.eps:
-            yaw = np.sign(dir_b[1]) if abs(dir_b[1]) > self.p.eps else 1.0
-            omega = np.array([0.0, 0.0, yaw * self.p.omega_max], dtype=float)
-            return ControlCommand(t=obs.t, thrust=thrust, omega_cmd_b=omega)
+            spin = np.sign(dir_b[1]) if abs(dir_b[1]) > self.p.eps else 1.0
+            return ControlCommand(
+                t=obs.t,
+                thrust=thrust,
+                omega_cmd_b=np.array([0.0, 0.0, spin * self.p.omega_max], dtype=float),
+            )
 
         x_img = float(dir_b[1] / dir_b[0])
         y_img = float(dir_b[2] / dir_b[0])
         omega = np.array([0.0, self.p.reacq_k_pitch * y_img, self.p.reacq_k_yaw * x_img], dtype=float)
         return ControlCommand(t=obs.t, thrust=thrust, omega_cmd_b=clamp_norm(omega, self.p.omega_max))
 
-    def _update_outer_loop(self, obs: Observation, R_e_b: np.ndarray, pr_e: np.ndarray, vr_e: np.ndarray) -> None:
+    def _update_outer_loop(self, R_e_b: np.ndarray, pr_e: np.ndarray, vr_e: np.ndarray) -> None:
         r = max(float(np.linalg.norm(pr_e)), self.p.eps)
         nt_e = _normalize(-pr_e, self.p.eps)
 
-        cam_x_b, cam_y_b, _cam_z_b = self._camera_axes_in_body()
-        n_hd_e = _normalize(R_e_b @ cam_x_b, self.p.eps)
-        n_vd_e = _normalize(R_e_b @ cam_y_b, self.p.eps)
+        _cam_x_b, _cam_y_b, cam_z_b = self._camera_axes_in_body()
+        ntd_e = _normalize(R_e_b @ cam_z_b, self.p.eps)
 
-        z_h_raw = float(np.dot(n_hd_e, nt_e))
-        z_v = float(np.dot(n_vd_e, nt_e))
+        z1_raw = float(1.0 - np.dot(ntd_e, nt_e))
+        kb = max(float(self.p.kb), self.p.eps)
+        z1 = float(np.clip(z1_raw, -0.98 * kb, 0.98 * kb))
+        barrier = float(z1 / max(kb * kb - z1 * z1, self.p.eps))
 
-        ch = max(self.p.c_h, self.p.eps)
-        z_h = float(np.clip(z_h_raw, -0.98 * ch, 0.98 * ch))
-        kh = float(z_h / max(ch * ch - z_h * z_h, self.p.eps))
+        self._omega1_b = self.p.k_los * barrier * (R_e_b.T @ np.cross(ntd_e, nt_e))
 
-        # Eq. (13) has a tightened vertical sector. In the controller this acts
-        # as a normalized linear bearing error so the gain remains meaningful
-        # when alpha_lat is small.
-        kv = float(z_v / max(self.p.c_v, self.p.eps))
-
-        P = np.eye(3, dtype=float) - np.outer(nt_e, nt_e)
-        z4 = vr_e + self.p.c1 * pr_e
+        z2 = vr_e + self.p.k1 * pr_e
+        P = -np.eye(3, dtype=float) + np.outer(nt_e, nt_e)
         a_des_e = (
-            -self.p.c1 * vr_e
-            -self.p.c2 * z4
-            -self.p.k_p * pr_e
-            -kh * (P @ n_hd_e) / r
-            -kv * (P @ n_vd_e) / r
+            -self.p.k1 * vr_e
+            -self.p.k2 * z2
+            -pr_e
+            + self.p.k_los * barrier * (P @ ntd_e) / r
         )
         a_des_e = clamp_norm(a_des_e, self.p.accel_max)
 
         g_e = np.array([0.0, 0.0, self.p.g], dtype=float)
         self._force_des_e = self.p.mass * (a_des_e - g_e)
-
-        self._omega_los_b = self.p.c_omega * (
-            R_e_b.T @ (kh * np.cross(nt_e, n_hd_e) + kv * np.cross(nt_e, n_vd_e))
-        )
 
         nf_e = _normalize(R_e_b @ np.array([0.0, 0.0, -1.0], dtype=float), self.p.eps)
         nfd_e = _normalize(self._force_des_e, self.p.eps)
@@ -215,13 +182,11 @@ class IBVSSO3Controller(ControllerBase):
         if (not obs.has_target) or obs.p_norm is None:
             return self._reacquire(obs, R_e_b, pr_e)
 
-        self._update_outer_loop(obs, R_e_b, pr_e, vr_e)
+        self._update_outer_loop(R_e_b, pr_e, vr_e)
 
         E = self._Rd.T @ R_e_b - R_e_b.T @ self._Rd
-        z_att = 0.5 * _vex(E)
-        omega_att_b = -self.p.k_att * z_att
-        omega_cmd_b = self._omega_los_b + omega_att_b
-        omega_cmd_b = clamp_norm(omega_cmd_b, self.p.omega_max)
+        omega2_b = -self.p.k_att * _vex(E)
+        omega_cmd_b = clamp_norm(self._omega1_b + omega2_b, self.p.omega_max)
 
         nf_e = _normalize(R_e_b @ np.array([0.0, 0.0, -1.0], dtype=float), self.p.eps)
         thrust = float(np.dot(nf_e, self._force_des_e))
@@ -232,5 +197,5 @@ class IBVSSO3Controller(ControllerBase):
         return ControlCommand(t=obs.t, thrust=thrust, omega_cmd_b=omega_cmd_b)
 
 
-PSLOSController = IBVSSO3Controller
-PSLOSControllerParams = IBVSSO3ControllerParams
+TCSTIBVSSO3Controller = HighSpeedIBVSSO3Controller
+TCSTIBVSSO3ControllerParams = HighSpeedIBVSSO3ControllerParams
