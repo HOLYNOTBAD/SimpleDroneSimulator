@@ -231,3 +231,5 @@ visualization:
 3. 运行 TCST 与 ICRA 的 S 形逃跑场景，对比机动目标下的视线保持能力。
 
 建议使用 PowerShell 或 VS Code 终端运行命令。仿真结束后关闭 matplotlib 窗口，脚本才会完全退出。
+
+协作说明：本项目在开发过程中接受了协作者的共同参与与改进建议。
