@@ -65,7 +65,7 @@ camera:
   cy: 240.0
   width: 640
   height: 480
-  mount_pitch_deg: -30.0
+  mount_pitch_deg: 0.0
 
 controller:
   mass: 0.5
@@ -82,7 +82,7 @@ controller:
   omega_max: 6.0
   thrust_min: 0.0
   thrust_max: 5.5
-  camera_mount_pitch_deg: -30.0
+  camera_mount_pitch_deg: 0.0
 
 logging:
   enable: false

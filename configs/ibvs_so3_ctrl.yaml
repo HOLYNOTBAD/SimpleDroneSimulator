@@ -69,7 +69,7 @@ camera:
   cy: 240.0
   width: 640
   height: 480
-  mount_pitch_deg: -30.0
+  mount_pitch_deg: 0.0
 
 # --- Controller (ICRA26 PS-LOS, without EKF) ---
 controller:
@@ -94,7 +94,7 @@ controller:
   thrust_min: 0.0
   thrust_max: 40.0
 
-  camera_mount_pitch_deg: -30.0
+  camera_mount_pitch_deg: 0.0
 
 logging:
   enable: false
