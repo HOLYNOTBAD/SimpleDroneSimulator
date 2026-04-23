@@ -1,4 +1,4 @@
-# TCST high-speed IBVS-SO3: target S-curve escape test.
+﻿# TCST high-speed IBVS-SO3: target S-curve escape test.
 
 rates:
   physics_hz: 1000.0
@@ -67,7 +67,7 @@ camera:
   cy: 240.0
   width: 640
   height: 480
-  mount_pitch_deg: 0.0
+  mount_pitch_deg: -30.0
 
 controller:
   mass: 0.5
@@ -81,10 +81,11 @@ controller:
   omega_max: 6.0
   thrust_min: 0.0
   thrust_max: 40.0
-  camera_mount_pitch_deg: 0.0
+  camera_mount_pitch_deg: -30.0
 
 logging:
   enable: false
   run_dir: "runs"
   filename: null
   seed: 0
+

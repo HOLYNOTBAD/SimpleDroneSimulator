@@ -65,11 +65,19 @@ class HighSpeedIBVSSO3ControllerParams:
     thrust_min: float = 0.0
     thrust_max: float = 40.0
 
-    camera_mount_pitch_deg: float = 0.0
+    camera_mount_pitch_deg: float = -30.0
+    designed_los_pitch_deg: float = 0.0
+    terminal_vertical_fade_start_m: float = 25.0
+    terminal_vertical_fade_end_m: float = 12.0
+    terminal_pitch_limit_start_m: float = 30.0
+    terminal_pitch_limit_end_m: float = 20.0
+    terminal_pitch_up_max_rad_s: float = 0.35
 
     reacq_k_yaw: float = 2.0
     reacq_k_pitch: float = 1.6
     reacq_forward_bias: float = 0.5
+    reacq_min_forward_component: float = 0.12
+    reacq_img_limit: float = 3.0
     eps: float = 1e-6
 
 
@@ -90,11 +98,13 @@ class HighSpeedIBVSSO3Controller(ControllerBase):
         self._Rd = np.eye(3, dtype=float)
         self._force_des_e = np.array([0.0, 0.0, -self.p.mass * self.p.g], dtype=float)
         self._omega1_b = np.zeros(3, dtype=float)
+        self._reacq_turn_sign = 1.0
 
     def reset(self) -> None:
         self._Rd = np.eye(3, dtype=float)
         self._force_des_e = np.array([0.0, 0.0, -self.p.mass * self.p.g], dtype=float)
         self._omega1_b = np.zeros(3, dtype=float)
+        self._reacq_turn_sign = 1.0
 
     def _camera_axes_in_body(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         pitch = np.deg2rad(float(self.p.camera_mount_pitch_deg))
@@ -110,38 +120,63 @@ class HighSpeedIBVSSO3Controller(ControllerBase):
         z_up = float(np.clip(z_up, 0.2, 1.0))
         return float(np.clip(self.p.mass * self.p.g / z_up, self.p.thrust_min, self.p.thrust_max))
 
+    def _terminal_vertical_weight(self, r: float) -> float:
+        start = float(max(self.p.terminal_vertical_fade_start_m, self.p.eps))
+        end = float(np.clip(self.p.terminal_vertical_fade_end_m, self.p.eps, start))
+        if r >= start:
+            return 1.0
+        if r <= end:
+            return 0.0
+        s = (r - end) / max(start - end, self.p.eps)
+        return float(s * s * (3.0 - 2.0 * s))
+
+    def _terminal_pitch_up_limit(self, r: float) -> float:
+        start = float(max(self.p.terminal_pitch_limit_start_m, self.p.eps))
+        end = float(np.clip(self.p.terminal_pitch_limit_end_m, self.p.eps, start))
+        max_up = float(np.clip(self.p.terminal_pitch_up_max_rad_s, 0.0, self.p.omega_max))
+        if r >= start:
+            return self.p.omega_max
+        if r <= end:
+            return max_up
+        s = (r - end) / max(start - end, self.p.eps)
+        w = float(s * s * (3.0 - 2.0 * s))
+        return max_up + (self.p.omega_max - max_up) * w
+
     def _reacquire(self, obs: Observation, R_e_b: np.ndarray, pr_e: np.ndarray | None) -> ControlCommand:
         thrust = min(self._hover_thrust(R_e_b) + self.p.reacq_forward_bias, self.p.thrust_max)
         if pr_e is None:
             return ControlCommand(t=obs.t, thrust=thrust, omega_cmd_b=np.zeros(3, dtype=float))
 
         dir_b = R_e_b.T @ _normalize(-pr_e, self.p.eps)
-        if dir_b[0] <= self.p.eps:
-            spin = np.sign(dir_b[1]) if abs(dir_b[1]) > self.p.eps else 1.0
-            return ControlCommand(
-                t=obs.t,
-                thrust=thrust,
-                omega_cmd_b=np.array([0.0, 0.0, spin * self.p.omega_max], dtype=float),
-            )
-
-        x_img = float(dir_b[1] / dir_b[0])
-        y_img = float(dir_b[2] / dir_b[0])
+        if abs(dir_b[1]) > self.p.eps:
+            self._reacq_turn_sign = float(np.sign(dir_b[1]))
+        x_forward = max(float(dir_b[0]), float(self.p.reacq_min_forward_component))
+        x_img = float(dir_b[1] / x_forward)
+        y_img = float(dir_b[2] / x_forward)
+        if dir_b[0] <= self.p.reacq_min_forward_component and abs(dir_b[1]) <= self.p.eps:
+            x_img = self._reacq_turn_sign * float(self.p.reacq_img_limit)
+        x_img = float(np.clip(x_img, -self.p.reacq_img_limit, self.p.reacq_img_limit))
+        y_img = float(np.clip(y_img, -self.p.reacq_img_limit, self.p.reacq_img_limit))
         omega = np.array([0.0, self.p.reacq_k_pitch * y_img, self.p.reacq_k_yaw * x_img], dtype=float)
         return ControlCommand(t=obs.t, thrust=thrust, omega_cmd_b=clamp_norm(omega, self.p.omega_max))
 
     def _update_outer_loop(self, R_e_b: np.ndarray, pr_e: np.ndarray, vr_e: np.ndarray) -> None:
         r = max(float(np.linalg.norm(pr_e)), self.p.eps)
         nt_e = _normalize(-pr_e, self.p.eps)
+        vertical_weight = self._terminal_vertical_weight(r)
 
-        _cam_x_b, _cam_y_b, cam_z_b = self._camera_axes_in_body()
-        ntd_e = _normalize(R_e_b @ cam_z_b, self.p.eps)
+        pitch = np.deg2rad(float(self.p.designed_los_pitch_deg))
+        ntd_b = np.array([np.cos(pitch), 0.0, np.sin(pitch)], dtype=float)
+        ntd_e = _normalize(R_e_b @ ntd_b, self.p.eps)
 
         z1_raw = float(1.0 - np.dot(ntd_e, nt_e))
         kb = max(float(self.p.kb), self.p.eps)
         z1 = float(np.clip(z1_raw, -0.98 * kb, 0.98 * kb))
         barrier = float(z1 / max(kb * kb - z1 * z1, self.p.eps))
 
-        self._omega1_b = self.p.k_los * barrier * (R_e_b.T @ np.cross(ntd_e, nt_e))
+        omega1_b = self.p.k_los * barrier * (R_e_b.T @ np.cross(ntd_e, nt_e))
+        omega1_b[1] *= vertical_weight
+        self._omega1_b = omega1_b
 
         z2 = vr_e + self.p.k1 * pr_e
         P = -np.eye(3, dtype=float) + np.outer(nt_e, nt_e)
@@ -173,6 +208,8 @@ class HighSpeedIBVSSO3Controller(ControllerBase):
 
     def compute(self, obs: Observation) -> ControlCommand:
         R_e_b = quat_to_R(obs.q_eb)
+        if obs.p_norm is not None and abs(float(obs.p_norm[0])) > self.p.eps:
+            self._reacq_turn_sign = float(np.sign(float(obs.p_norm[0])))
 
         pr_e = None if obs.p_r is None else np.asarray(obs.p_r, dtype=float).reshape(3)
         vr_e = None if obs.v_r is None else np.asarray(obs.v_r, dtype=float).reshape(3)
@@ -186,7 +223,9 @@ class HighSpeedIBVSSO3Controller(ControllerBase):
 
         E = self._Rd.T @ R_e_b - R_e_b.T @ self._Rd
         omega2_b = -self.p.k_att * _vex(E)
-        omega_cmd_b = clamp_norm(self._omega1_b + omega2_b, self.p.omega_max)
+        omega_cmd_b = self._omega1_b + omega2_b
+        omega_cmd_b[1] = min(float(omega_cmd_b[1]), self._terminal_pitch_up_limit(float(np.linalg.norm(pr_e))))
+        omega_cmd_b = clamp_norm(omega_cmd_b, self.p.omega_max)
 
         nf_e = _normalize(R_e_b @ np.array([0.0, 0.0, -1.0], dtype=float), self.p.eps)
         thrust = float(np.dot(nf_e, self._force_des_e))

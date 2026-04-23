@@ -1,4 +1,4 @@
-# configs/ibvs_so3_ctrl.yaml
+﻿# configs/ibvs_so3_ctrl.yaml
 
 # --- timing / rates ---
 rates:
@@ -69,7 +69,7 @@ camera:
   cy: 240.0
   width: 640
   height: 480
-  mount_pitch_deg: 0.0
+  mount_pitch_deg: -30.0
 
 # --- Controller (ICRA26 PS-LOS, without EKF) ---
 controller:
@@ -85,7 +85,7 @@ controller:
 
   # Planar-sector LOS bounds.
   alpha_lon_deg: 55.0
-  alpha_lat_deg: 8.0
+  alpha_lat_deg: 18.0
   safety_margin_deg: 2.0
 
   # Inner SO(3) tracker and actuator limits.
@@ -94,10 +94,11 @@ controller:
   thrust_min: 0.0
   thrust_max: 40.0
 
-  camera_mount_pitch_deg: 0.0
+  camera_mount_pitch_deg: -30.0
 
 logging:
   enable: false
   run_dir: "runs"
   filename: null   # null -> auto timestamp
   seed: 0
+

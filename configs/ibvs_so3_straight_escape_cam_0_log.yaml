@@ -1,4 +1,4 @@
-﻿# ICRA26 PS-LOS: target S-curve escape test.
+# ICRA26 PS-LOS: target straight escape test, camera mount 0 deg, logging enabled.
 
 rates:
   physics_hz: 1000.0
@@ -7,9 +7,9 @@ rates:
   visualization_hz: 24.0
 
 visualization:
-  enable: true
+  enable: false
   realtime: false
-  enable_fov: true
+  enable_fov: false
   trail_len: 1000
   auto_axis: false
   ned_axes: true
@@ -20,7 +20,7 @@ visualization:
   fov_target_marker_size_max: 42.0
   fov_target_diameter_m: 1.5
   map_center: [45.0, 0.0, -5.0]
-  map_size: [140.0, 100.0, 60.0]
+  map_size: [140.0, 80.0, 60.0]
   colors:
     uav_traj: [158, 22, 157, 140]
     uav_body_left: [22, 5, 139]
@@ -32,7 +32,7 @@ visualization:
     fov_status_no_target: [181, 35, 4]
     fov_status_has_target: [0, 128, 0]
   enable_realtime_animation: false
-  enable_offline_animation: true
+  enable_offline_animation: false
   save_cache: false
 
 termination:
@@ -49,13 +49,11 @@ uav0:
 tgt0:
   t: 0.0
   p_e: [70.0, 0.0, 0.0]
-  v_e: [3.5, 0.0, 0.0]
+  v_e: [4.0, 0.0, 0.0]
 
 target:
-  mode: s_escape
+  mode: straight_escape
   accel_e: null
-  s_amplitude_m: 8.0
-  s_frequency_hz: 0.14
 
 rigid_body:
   params_yaml: "configs/hummingbird.yaml"
@@ -67,28 +65,27 @@ camera:
   cy: 240.0
   width: 640
   height: 480
-  mount_pitch_deg: -30.0
+  mount_pitch_deg: 0.0
 
 controller:
   mass: 0.5
   g: 9.81
   c1: 1.2
   c2: 1.8
-  c_omega: 3.5
-  k_p: 0.8
-  accel_max: 20.0
+  c_omega: 2.0
+  k_p: 0.5
+  accel_max: 12.0
   alpha_lon_deg: 55.0
   alpha_lat_deg: 18.0
   safety_margin_deg: 2.0
   k_att: 3.5
   omega_max: 6.0
   thrust_min: 0.0
-  thrust_max: 40.0
-  camera_mount_pitch_deg: -30.0
+  thrust_max: 5.5
+  camera_mount_pitch_deg: 0.0
 
 logging:
-  enable: false
+  enable: true
   run_dir: "runs"
-  filename: null
+  filename: "straight_escape_cam0_debug_v2.npz"
   seed: 0
-
